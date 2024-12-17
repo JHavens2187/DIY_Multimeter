@@ -1,0 +1,194 @@
+const int voltagePin = A0;      // Voltage measurement pin
+const int currentPin1 = A1;		// Current measurement pin 1
+const int capPin = A2;          // Capacitance measurement pin
+const int resistancePin = A3;   // Resistance measurement pin
+const int continuityPin = 7;    // Continuity test pin
+
+const int tCurrent = 2;         // Transistor control pin for current
+const int tVoltage = 3;         // Transistor control pin for voltage
+const int tCapacitance = 4;     // Transistor control pin for capacitance
+const int tResistance = 5;      // Transistor control pin for resistance
+const int tContinuity = 6;      // Transistor control pin for continuity
+
+int mode = -1;  // Initialize mode to an invalid value
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Setup started"); // Debug statement
+  pinMode(tCurrent, OUTPUT);
+  pinMode(tVoltage, OUTPUT);
+  pinMode(tCapacitance, OUTPUT);
+  pinMode(tResistance, OUTPUT);
+  pinMode(tContinuity, OUTPUT);
+  pinMode(continuityPin, INPUT_PULLUP); // Internal pull-up for continuity
+  Serial.println("Setup completed"); // Debug statement
+
+  // Print instructions to the Serial Monitor
+  Serial.println("Enter measurement mode:");
+  Serial.println("0 - Voltage");
+  Serial.println("1 - Current");
+  Serial.println("2 - Capacitance");
+  Serial.println("3 - Resistance");
+  Serial.println("4 - Continuity");
+}
+
+
+void loop() {
+  if (Serial.available() > 0) {
+    mode = Serial.parseInt();  // Read the mode from the Serial Monitor
+    Serial.print("Selected mode: ");
+    Serial.println(mode);
+
+    // Reset all transistors (ensure no overlap)
+    digitalWrite(tCurrent, LOW);
+    digitalWrite(tVoltage, LOW);
+    digitalWrite(tCapacitance, LOW);
+    digitalWrite(tResistance, LOW);
+    digitalWrite(tContinuity, LOW);
+
+    // Process selected mode
+    switch (mode) {
+      case 0:
+        digitalWrite(tVoltage, HIGH);
+        measureVoltage();
+        digitalWrite(tVoltage, LOW);
+        break;
+      case 1:
+        digitalWrite(tCurrent, HIGH);
+        delay(500); // A slight delay for transistor settling
+        measureCurrent();
+        digitalWrite(tCurrent, LOW);
+        break;
+      case 2:
+        digitalWrite(tCapacitance, HIGH);
+        measureCapacitance();
+        digitalWrite(tCapacitance, LOW);
+        break;
+      case 3:
+        digitalWrite(tResistance, HIGH);
+        measureResistance();
+        digitalWrite(tResistance, LOW);
+        break;
+      case 4:
+        digitalWrite(tContinuity, HIGH);
+        measureContinuity();
+        digitalWrite(tContinuity, LOW);
+        break;
+      default:
+        Serial.println("Invalid mode selected. Please enter a number between 0 and 4.");
+        break;
+    }
+
+    // Add a longer delay between measurements to allow the mode to complete fully
+    delay(1000);  // Wait to prevent serial buffer issues
+
+    // Clear any remaining characters in the serial buffer (to avoid multiple inputs)
+    while (Serial.available() > 0) {
+      Serial.read();  // Read and discard characters
+    }
+  }
+}
+
+
+
+void measureVoltage() {
+  Serial.println("Measuring Voltage...");
+
+  int rawValue = analogRead(voltagePin);
+  Serial.print("Raw analog value (Out): ");
+  Serial.println(rawValue);
+
+  float V_out = (rawValue * 5.0) / 1023.0;
+  Serial.print("Measured V_out: ");
+  Serial.println(V_out, 2);
+
+  ///float V_adjusted = V_out - 0.7;
+  ///Serial.print("Adjusted V_out (after V_BE subtraction): ");
+  ///Serial.println(V_adjusted, 2);
+
+  float V_in = V_out * 5.0;
+  Serial.print("Calculated V_in: ");
+  Serial.println(V_in, 2);
+}
+
+void measureCurrent() {
+  const float shuntResistorValue = 10.0; // Value of the shunt resistor in ohms
+  Serial.println("Measuring Current...");
+
+  int rawValue1 = analogRead(currentPin1);
+  Serial.print("Raw analog value: ");
+  Serial.println(rawValue1);
+
+  // Convert ADC value to voltage
+  float voltageDrop = (rawValue1 * 5.0) / 1023.0;
+  //float tempvolt = voltageDrop * 0.00488;
+  Serial.print("Voltage drop across shunt resistor: ");
+  Serial.println(voltageDrop, 3); // Print voltage drop with 3 decimal places
+
+  // Calculate current using Ohm's law
+  float current = voltageDrop / shuntResistorValue;
+  Serial.print("Measured current: ");
+  Serial.println(current, 4); // Print current with 4 decimal places
+}
+
+void measureCapacitance() {
+  const float resistorValue = 10000.0; // Value of the resistor in ohms
+  Serial.println("Measuring Capacitance..."); // Debug statement
+
+  digitalWrite(tCapacitance, LOW); // Discharge the capacitor
+  delay(1000); // Ensure full discharge
+
+  pinMode(capPin, INPUT);
+  digitalWrite(tCapacitance, HIGH); // Start charging
+
+   // Measure the time it takes for the capacitor to reach 63% of Vcc (3.15V)
+  unsigned long startTime = micros();
+  while (analogRead(capPin) < (0.632 * 1023)) {
+    // Wait until the capacitor voltage reaches 63% of Vcc
+  }
+  unsigned long elapsedTime = micros() - startTime;
+
+  // Stop charging the capacitor
+  digitalWrite(tCapacitance, LOW);
+
+  if (elapsedTime == 0) {
+    Serial.println("Capacitance measurement failed. Check connections and capacitor.");
+    return;
+  }
+
+  // Debugging output
+  Serial.print("Elapsed Time (microseconds): ");
+  Serial.println(elapsedTime);
+
+  // Calculate capacitance in Farads using the formula C = t / R
+  float capacitance = (float)elapsedTime / (resistorValue); // Convert time to seconds and calculate capacitance
+
+  Serial.print("Capacitance: ");
+  Serial.print(capacitance, 2);
+  Serial.println(" uF");
+}
+
+
+void measureResistance() {
+  const int R1 = 1000.0; // 1kOhm resistor
+  const int Vin = 5; // 5V source
+  Serial.println("Measuring Resistance..."); // Debug statement
+  digitalWrite(tResistance, HIGH); // Apply 5V to the resistor series
+  int val = analogRead(resistancePin);
+  float voltage = (val * 5.0) / 1023.0;
+  float resistance = (R1 * voltage) / (Vin - voltage); // solving voltage divider eqn for R2
+  Serial.print("Resistance: ");
+  Serial.print(resistance);
+  Serial.println(" Ohms");
+  digitalWrite(tResistance, LOW); // Turn off the voltage applied
+}
+
+void measureContinuity() {
+  Serial.println("Measuring Continuity..."); // Debug statement
+  int val = digitalRead(continuityPin);
+  if (val == LOW) {
+    Serial.println("Continuity Detected!");
+  } else {
+    Serial.println("No Continuity.");
+  }
+}
